@@ -3,7 +3,6 @@ from mlproject import logger
 from mlproject.entity.config_entity import DataValidationConfig
 import pandas as pd
 
-
 class DataValidation:
 
     def __init__(self, config: DataValidationConfig):
