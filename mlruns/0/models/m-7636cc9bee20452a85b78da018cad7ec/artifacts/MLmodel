@@ -1,0 +1,23 @@
+artifact_path: file:c:/Users/lokar/Desktop/End-to-End-Machine-Learning-Project-with-ML-FLOW/mlruns/0/models/m-7636cc9bee20452a85b78da018cad7ec/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.skops
+    predict_fn: predict
+    python_version: 3.12.10
+  sklearn:
+    code: null
+    pickled_model: model.skops
+    serialization_format: skops
+    sklearn_version: 1.9.1
+    skops_trusted_types: null
+mlflow_version: 3.14.0
+model_id: m-7636cc9bee20452a85b78da018cad7ec
+model_size_bytes: 11283
+model_uuid: m-7636cc9bee20452a85b78da018cad7ec
+prompts: null
+run_id: 053d96ddda0d42c5937e8d903e841690
+utc_time_created: '2026-11-03 10:09:11.446768'
