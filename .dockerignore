@@ -1,0 +1,11 @@
+.git
+.venv
+.venv-new
+__pycache__
+*.py[cod]
+*.ipynb
+artifacts
+logs
+mlruns
+mlflow.db
+research

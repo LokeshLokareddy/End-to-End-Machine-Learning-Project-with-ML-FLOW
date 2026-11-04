@@ -1,0 +1,127 @@
+name: CI/CD to AWS EC2
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Build, push, and run the batch pipeline on EC2
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Validate and build image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check Python syntax
+        run: python -m compileall -q main.py src
+
+      - name: Build Docker image
+        run: docker build --tag mlproject:ci .
+
+  deploy:
+    name: Push to ECR and run on EC2
+    needs: ci
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.deploy && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:latest
+
+      - name: Prepare SSH connection
+        env:
+          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$EC2_SSH_PRIVATE_KEY" > ~/.ssh/ec2_deploy_key
+          printf '%s\n' "$EC2_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/ec2_deploy_key ~/.ssh/known_hosts
+
+      - name: Run pipeline on EC2
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_URI: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          trap 'rm -f deploy-remote.sh' EXIT
+
+          python - <<'PY'
+          import os
+          import shlex
+
+          variables = {
+              "AWS_REGION": os.environ["AWS_REGION"],
+              "ECR_REGISTRY": os.environ["ECR_REGISTRY"],
+              "IMAGE_URI": os.environ["IMAGE_URI"],
+              "DAGSHUB_USERNAME": os.environ["DAGSHUB_USERNAME"],
+              "DAGSHUB_TOKEN": os.environ["DAGSHUB_TOKEN"],
+          }
+
+          with open("deploy-remote.sh", "w", encoding="utf-8") as script:
+              script.write("set -euo pipefail\n")
+              for name, value in variables.items():
+                  script.write(f"export {name}={shlex.quote(value)}\n")
+              script.write(
+                  'aws ecr get-login-password --region "$AWS_REGION" '
+                  '| docker login --username AWS --password-stdin "$ECR_REGISTRY"\n'
+              )
+              script.write('docker pull "$IMAGE_URI"\n')
+              script.write(
+                  "docker run --rm "
+                  "--env MLFLOW_TRACKING_USERNAME "
+                  "--env MLFLOW_TRACKING_PASSWORD "
+                  '"$IMAGE_URI"\n'
+              )
+          PY
+
+          ssh \
+            -i ~/.ssh/ec2_deploy_key \
+            -o IdentitiesOnly=yes \
+            "$EC2_USER@$EC2_HOST" \
+            'bash -s' < deploy-remote.sh
