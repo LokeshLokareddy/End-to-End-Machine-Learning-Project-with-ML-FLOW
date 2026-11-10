@@ -120,8 +120,9 @@ jobs:
               )
           PY
 
-          ssh \
+          ssh -vv \
             -i ~/.ssh/ec2_deploy_key \
             -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
             "$EC2_USER@$EC2_HOST" \
             'bash -s' < deploy-remote.sh
